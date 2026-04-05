@@ -20,28 +20,26 @@
 ## Progress
 
 ### Workstream A: Foundation (sequential)
-- [ ] A1: Phase 0 — env.ts (make Google optional)
-- [ ] A2: Phase 0 — auth.ts (OIDC config, handleLinkAccount guard)
-- [ ] A3: Phase 1 — Type system (types.ts, provider-types.ts, rate-limit)
-- [ ] A4: Phase 1 — Schema (ImapCredential, ImapSyncState, EmailFolder rename)
-- [ ] A5: Prisma migration generate
+- [x] A1: Phase 0 — env.ts (make Google optional)
+- [x] A2: Phase 0 — auth.ts (OIDC config, handleLinkAccount guard)
+- [x] A3: Phase 1 — Type system (types.ts, provider-types.ts, rate-limit)
+- [x] A4: Phase 1 — Schema (ImapCredential, ImapSyncState, EmailFolder rename)
+- [x] A5: Prisma migration generate
 
 ### Workstream B: IMAP Core (after A)
-- [ ] B1: Phase 2 — Install deps, client factory, UID helpers
-- [ ] B2: Phase 3 — ImapProvider message/thread/folder methods
-- [ ] B3: Phase 3 — ImapProvider search/label/bulk methods
-- [ ] B4: Phase 3 — ImapProvider stub methods + SMTP
+- [x] B1: Phase 2 — Install deps, client factory, UID helpers
+- [x] B2-B4: Phase 3 — ImapProvider (1542 lines, ~45 methods implemented, ~11 stubbed)
 
 ### Workstream C: UI & Linking (after A, parallel with B)
-- [ ] C1: Phase 4 — IMAP linking API routes
-- [ ] C2: Phase 4 — AddAccount.tsx IMAP form
-- [ ] C3: Phase 0 — LoginForm OIDC button
+- [x] C1: Phase 4 — IMAP linking API routes (validate + connect)
+- [x] C2: Phase 4 — AddAccount.tsx IMAP form
+- [x] C3: Phase 0 — LoginForm OIDC button
 
 ### Workstream D: Sync (after B)
-- [ ] D1: Phase 5 — Polling sync + cron endpoint
+- [x] D1: Phase 5 — Polling sync + cron endpoint (processHistoryItem fully wired)
 
 ### Workstream E: Provider Check Fixes (after B, parallel with D)
-- [ ] E1: Phase 6 — Must-fix provider checks
+- [x] E1: Phase 6 — Must-fix provider checks (permissions, clean, watch-manager, provider factory, terminology)
 
 ## Key Decisions (for subagent consistency)
 - **Library:** imapflow for IMAP, nodemailer for SMTP, mailparser for MIME
