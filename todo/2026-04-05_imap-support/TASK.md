@@ -1,7 +1,7 @@
 # IMAP Support for Inbox Zero
 
 **Issue:** https://github.com/elie222/inbox-zero/issues/62
-**Status:** Implementation Complete (MVP)
+**Status:** Implementation Complete + Tested (MVP)
 
 ## Description
 Add support for generic IMAP email servers, enabling users to connect their own mail servers (not just Gmail/Outlook).
@@ -50,9 +50,15 @@ Add support for generic IMAP email servers, enabling users to connect their own 
 - 32 files changed, ~4,100 lines added
 - 11 commits
 
+## Testing (2026-04-05)
+- Live integration tests against Migadu (test1@txlab.io)
+- 61/61 tests pass: unit tests (resolveThreadId, translateQuery, flags, extractHeader) + integration (getFolders, getLabels, getInboxStats, getInboxMessages, threading, getMessage, getMessageByRfc822MessageId, getThread, getThreadMessages, getLatestMessageInThread, getThreads, searchMessages, getMessagesFromSender, hasPreviousCommunications, countReceivedMessages, markRead, labelMessage, createLabel, isReplyInThread, getMessagesWithPagination, getThreadsWithQuery, archiveMessage, archiveThread)
+- Bug found & fixed: ImapFlow's `before` criterion silently fails with Date objects; workaround added in `searchByUid`
+- Test scripts: `utils/imap/test-connection.ts`, `utils/imap/test-provider.ts`
+- SMTP port corrected to 465/TLS for Migadu
+
 ## Next Steps
-1. Integration testing with real Posteo/Migadu accounts
-2. Sieve filter support (ManageSieve protocol)
-3. Connection pooling for ImapFlow
-4. CONDSTORE-based incremental sync
-5. IMAP IDLE for near-real-time notifications
+1. Sieve filter support (ManageSieve protocol)
+2. Connection pooling for ImapFlow
+3. CONDSTORE-based incremental sync
+4. IMAP IDLE for near-real-time notifications

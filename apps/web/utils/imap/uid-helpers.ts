@@ -36,6 +36,29 @@ export async function fetchByUid(
 }
 
 /**
+ * Formats a Date as "DD-Mon-YYYY" for IMAP SEARCH.
+ * Workaround: ImapFlow's `before` criterion silently fails with Date objects
+ * but works correctly with date strings.
+ */
+function formatImapDate(date: Date): string {
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  return `${date.getDate()}-${months[date.getMonth()]}-${date.getFullYear()}`;
+}
+
+/**
  * Searches a mailbox and returns an array of UIDs matching the criteria.
  * Always uses UID mode.
  */
@@ -45,7 +68,15 @@ export async function searchByUid(
   criteria: SearchObject,
 ): Promise<number[]> {
   await ensureMailboxOpen(client, mailbox);
-  const result = await client.search(criteria, { uid: true });
+
+  // Workaround: ImapFlow silently returns false for `before` with Date objects.
+  // Convert Date to formatted string for reliable BEFORE search.
+  const fixed = { ...criteria };
+  if (fixed.before instanceof Date) {
+    fixed.before = formatImapDate(fixed.before) as unknown as Date;
+  }
+
+  const result = await client.search(fixed, { uid: true });
   // client.search returns number[] | false
   return result || [];
 }
