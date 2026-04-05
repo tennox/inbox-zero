@@ -5,6 +5,7 @@ import type { Logger } from "@/utils/logger";
 import { createScopedLogger } from "@/utils/logger";
 import { resolveThreadId } from "@/utils/imap/thread";
 import { imapFlagsToLabelIds } from "@/utils/imap/flags";
+import { extractHeader } from "@/utils/imap/headers";
 
 export interface MessageHeaders {
   date?: string;
@@ -269,37 +270,4 @@ function getHeaderString(
   if (typeof val === "string") return val;
   if (Array.isArray(val)) return val[0] as string | undefined;
   return undefined;
-}
-
-/**
- * Extracts a single header value from raw header block text.
- * Handles folded (multi-line) headers.
- */
-function extractHeader(headersText: string, name: string): string | undefined {
-  const lowerName = name.toLowerCase();
-  const lines = headersText.split(/\r?\n/);
-
-  let value: string | undefined;
-  let capturing = false;
-
-  for (const line of lines) {
-    if (capturing) {
-      if (/^\s/.test(line)) {
-        value = `${value ?? ""} ${line.trim()}`;
-        continue;
-      }
-      capturing = false;
-    }
-
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
-
-    const headerName = line.slice(0, colonIdx).toLowerCase().trim();
-    if (headerName === lowerName) {
-      value = line.slice(colonIdx + 1).trim();
-      capturing = true;
-    }
-  }
-
-  return value;
 }

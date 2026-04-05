@@ -1,5 +1,6 @@
 import type { ImapFlow } from "imapflow";
 import { searchByUid } from "@/utils/imap/uid-helpers";
+import { extractHeader } from "@/utils/imap/headers";
 
 /**
  * Given a set of UIDs that belong to a THREAD result group,
@@ -142,39 +143,4 @@ async function getThreadsViaHeaderScan(
   }
 
   return threadMap;
-}
-
-/**
- * Simple header extraction from raw header block text.
- * Handles folded headers (continuation lines starting with whitespace).
- */
-function extractHeader(headersText: string, name: string): string | undefined {
-  const lowerName = name.toLowerCase();
-  const lines = headersText.split(/\r?\n/);
-
-  let value: string | undefined;
-  let capturing = false;
-
-  for (const line of lines) {
-    if (capturing) {
-      // Folded header continuation
-      if (/^\s/.test(line)) {
-        value = `${value ?? ""} ${line.trim()}`;
-        continue;
-      }
-      // New header starts — stop capturing
-      capturing = false;
-    }
-
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
-
-    const headerName = line.slice(0, colonIdx).toLowerCase().trim();
-    if (headerName === lowerName) {
-      value = line.slice(colonIdx + 1).trim();
-      capturing = true;
-    }
-  }
-
-  return value;
 }

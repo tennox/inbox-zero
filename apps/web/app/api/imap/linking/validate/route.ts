@@ -32,7 +32,6 @@ export const POST = withAuth("imap/linking/validate", async (request) => {
   try {
     await imapClient.connect();
     await imapClient.list();
-    await imapClient.logout();
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "IMAP connection failed";
@@ -40,6 +39,12 @@ export const POST = withAuth("imap/linking/validate", async (request) => {
       { error: `IMAP connection failed: ${message}` },
       { status: 400 },
     );
+  } finally {
+    try {
+      await imapClient.logout();
+    } catch {
+      // best-effort cleanup
+    }
   }
 
   // Test SMTP connection

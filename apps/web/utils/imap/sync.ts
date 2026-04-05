@@ -2,7 +2,7 @@ import prisma from "@/utils/prisma";
 import { createImapClient } from "@/utils/imap/client";
 import { fetchAndParseMessage } from "@/utils/imap/message";
 import { searchByUid } from "@/utils/imap/uid-helpers";
-import { createEmailProvider } from "@/utils/email/provider";
+import { ImapProvider } from "@/utils/email/imap";
 import { processHistoryItem } from "@/utils/webhook/process-history-item";
 import { isPremium, hasAiAccess } from "@/utils/premium";
 import { captureException } from "@/utils/error";
@@ -168,12 +168,8 @@ export async function pollImapAccount(
       return { newMessages: 0 };
     }
 
-    // Create the IMAP provider (reusing the connected client)
-    const provider = await createEmailProvider({
-      emailAccountId,
-      provider: "imap",
-      logger: scopedLogger,
-    });
+    // Create the IMAP provider reusing the already-connected client
+    const provider = new ImapProvider(client, scopedLogger, emailAccountId);
 
     let processed = 0;
     let highestUid = lastUid;

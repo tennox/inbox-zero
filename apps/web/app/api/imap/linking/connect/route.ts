@@ -38,31 +38,31 @@ export const POST = withAuth("imap/linking/connect", async (request) => {
         providerAccountId: email,
         userId,
         type: "credentials",
+        imapCredential: {
+          create: {
+            imapHost,
+            imapPort,
+            smtpHost,
+            smtpPort,
+            username,
+            password: encryptedPassword,
+          },
+        },
+        emailAccount: {
+          create: { email, userId },
+        },
       },
+      include: { emailAccount: true },
     });
 
-    await prisma.imapCredential.create({
-      data: {
-        accountId: account.id,
-        imapHost,
-        imapPort,
-        smtpHost,
-        smtpPort,
-        username,
-        password: encryptedPassword,
-      },
-    });
-
-    const emailAccount = await prisma.emailAccount.create({
-      data: {
-        email,
-        userId,
-        accountId: account.id,
-      },
-    });
+    // emailAccount is always present because we created it above
+    const emailAccountId = account.emailAccount?.id;
+    if (!emailAccountId) {
+      throw new Error("emailAccount creation did not return an id");
+    }
 
     return NextResponse.json({
-      emailAccountId: emailAccount.id,
+      emailAccountId,
     } satisfies PostConnectImapResponse);
   } catch (error) {
     if (isDuplicateError(error)) {

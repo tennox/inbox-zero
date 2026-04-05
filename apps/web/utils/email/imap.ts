@@ -26,6 +26,7 @@ import { translateQuery } from "@/utils/imap/search";
 import { labelIdToImapKeyword } from "@/utils/imap/flags";
 import { searchByUid, storeByUid, moveByUid } from "@/utils/imap/uid-helpers";
 import { createSmtpTransport } from "@/utils/imap/client";
+import { extractHeader } from "@/utils/imap/headers";
 
 export class ImapProvider implements EmailProvider {
   readonly name = "imap" as const;
@@ -606,7 +607,7 @@ export class ImapProvider implements EmailProvider {
     } = options;
 
     const sf = await this.getSpecialFolders();
-    const mailbox = inboxOnly ? sf.inbox : sf.inbox;
+    const mailbox = sf.inbox; // All pagination currently searches inbox
 
     const criteria = translateQuery(query);
     if (before) criteria.before = before;
@@ -1447,6 +1448,14 @@ export class ImapProvider implements EmailProvider {
   ): Promise<{ messageId: string; threadId: string }> {
     throw new Error("Drafts not supported for IMAP provider");
   }
+
+  async close(): Promise<void> {
+    try {
+      await this.client.logout();
+    } catch {
+      // best-effort cleanup
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1482,13 +1491,14 @@ function formatDate(date: Date | string): string {
  */
 async function fetchMessageHeadersRaw(
   client: ImapFlow,
-  _mailbox: string,
+  mailbox: string,
   uid: number,
 ): Promise<{
   messageId?: string;
   references?: string;
   inReplyTo?: string;
 }> {
+  await client.mailboxOpen(mailbox);
   const msg = await client.fetchOne(
     String(uid),
     {
@@ -1503,40 +1513,8 @@ async function fetchMessageHeadersRaw(
   const text = msg.headers.toString("utf8");
 
   return {
-    messageId: extractRawHeader(text, "message-id"),
-    references: extractRawHeader(text, "references"),
-    inReplyTo: extractRawHeader(text, "in-reply-to"),
+    messageId: extractHeader(text, "message-id"),
+    references: extractHeader(text, "references"),
+    inReplyTo: extractHeader(text, "in-reply-to"),
   };
-}
-
-function extractRawHeader(
-  headersText: string,
-  name: string,
-): string | undefined {
-  const lowerName = name.toLowerCase();
-  const lines = headersText.split(/\r?\n/);
-
-  let value: string | undefined;
-  let capturing = false;
-
-  for (const line of lines) {
-    if (capturing) {
-      if (/^\s/.test(line)) {
-        value = `${value ?? ""} ${line.trim()}`;
-        continue;
-      }
-      capturing = false;
-    }
-
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
-
-    const headerName = line.slice(0, colonIdx).toLowerCase().trim();
-    if (headerName === lowerName) {
-      value = line.slice(colonIdx + 1).trim();
-      capturing = true;
-    }
-  }
-
-  return value;
 }
