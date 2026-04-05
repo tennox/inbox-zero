@@ -52,20 +52,23 @@ const useMicrosoftOauthEmulator = isMicrosoftEmulationEnabled();
 const mobileAuthOrigins = env.MOBILE_AUTH_ORIGIN
   ? [env.MOBILE_AUTH_ORIGIN]
   : [];
-const googleSocialProvider = !useGoogleOauthEmulator
-  ? {
-      clientId: env.GOOGLE_CLIENT_ID,
-      clientSecret: env.GOOGLE_CLIENT_SECRET,
-      scope: [...GMAIL_SCOPES],
-      accessType: "offline" as const,
-      prompt: "select_account consent" as const,
-      disableIdTokenSignIn: true,
-      // For preview deployments, redirect through staging (which proxies back to preview URL)
-      ...(env.OAUTH_PROXY_URL && {
-        redirectURI: `${env.OAUTH_PROXY_URL}/api/auth/callback/google`,
-      }),
-    }
-  : null;
+const googleSocialProvider =
+  !useGoogleOauthEmulator &&
+  env.GOOGLE_CLIENT_ID &&
+  env.GOOGLE_CLIENT_SECRET
+    ? {
+        clientId: env.GOOGLE_CLIENT_ID,
+        clientSecret: env.GOOGLE_CLIENT_SECRET,
+        scope: [...GMAIL_SCOPES],
+        accessType: "offline" as const,
+        prompt: "select_account consent" as const,
+        disableIdTokenSignIn: true,
+        // For preview deployments, redirect through staging (which proxies back to preview URL)
+        ...(env.OAUTH_PROXY_URL && {
+          redirectURI: `${env.OAUTH_PROXY_URL}/api/auth/callback/google`,
+        }),
+      }
+    : null;
 const microsoftSocialProvider = !useMicrosoftOauthEmulator
   ? {
       clientId: env.MICROSOFT_CLIENT_ID || "",
@@ -79,7 +82,9 @@ const microsoftSocialProvider = !useMicrosoftOauthEmulator
     }
   : null;
 const genericOauthConfig: GenericOAuthConfig[] = [
-  ...(useGoogleOauthEmulator
+  ...(useGoogleOauthEmulator &&
+  env.GOOGLE_CLIENT_ID &&
+  env.GOOGLE_CLIENT_SECRET
     ? [
         {
           providerId: "google",
@@ -111,6 +116,18 @@ const genericOauthConfig: GenericOAuthConfig[] = [
           ...(env.OAUTH_PROXY_URL && {
             redirectURI: `${env.OAUTH_PROXY_URL}/api/auth/oauth2/callback/microsoft`,
           }),
+        },
+      ]
+    : []),
+  ...(env.OIDC_ISSUER_URL && env.OIDC_CLIENT_ID && env.OIDC_CLIENT_SECRET
+    ? [
+        {
+          providerId: env.OIDC_PROVIDER_ID || "oidc",
+          discoveryUrl: `${env.OIDC_ISSUER_URL}/.well-known/openid-configuration`,
+          clientId: env.OIDC_CLIENT_ID,
+          clientSecret: env.OIDC_CLIENT_SECRET,
+          scopes: ["openid", "profile", "email"],
+          pkce: true,
         },
       ]
     : []),
@@ -205,7 +222,11 @@ export const betterAuthConfig = betterAuth({
     storeStateStrategy: "cookie", // Required for oAuthProxy to encrypt state
     accountLinking: {
       enabled: true,
-      trustedProviders: ["google", "microsoft"],
+      trustedProviders: [
+        "google",
+        "microsoft",
+        ...(env.OIDC_PROVIDER_ID ? [env.OIDC_PROVIDER_ID] : ["oidc"]),
+      ],
     },
   },
   verification: {
@@ -475,9 +496,24 @@ async function getProfileData(providerId: string, accessToken: string) {
       throw error;
     }
   }
+
+  // For non-Google/non-Microsoft providers (OIDC, IMAP), profile data is not fetched from provider
+  return undefined;
 }
 
 async function handleLinkAccount(account: Account) {
+  // IMAP accounts are linked via credential form, OIDC accounts don't need email provider linking
+  if (
+    !isGoogleProvider(account.providerId) &&
+    !isMicrosoftProvider(account.providerId)
+  ) {
+    await prisma.account.update({
+      where: { id: account.id },
+      data: { disconnectedAt: null },
+    });
+    return;
+  }
+
   let primaryEmail: string | null | undefined;
   let primaryName: string | null | undefined;
   let primaryPhotoUrl: string | null | undefined;
