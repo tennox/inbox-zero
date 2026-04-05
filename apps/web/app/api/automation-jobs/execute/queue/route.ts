@@ -12,6 +12,8 @@ export const maxDuration = 300;
 
 const logger = createScopedLogger("automation-jobs/execute/queue");
 
+// Cast: handleCallback accepts `Request | { request: Request }` but Next.js
+// route handlers require a plain Request, so narrowing the input type is safe.
 export const POST = handleCallback<z.infer<typeof executeAutomationJobBody>>(
   async (message, metadata) => {
     const parseResult = executeAutomationJobBody.safeParse(message);
@@ -56,4 +58,4 @@ export const POST = handleCallback<z.infer<typeof executeAutomationJobBody>>(
       };
     },
   },
-);
+) as (req: Request) => Promise<Response>;

@@ -13,6 +13,8 @@ const queuePayloadSchema = z.object({
   emailAccountId: z.string().min(1),
 });
 
+// Cast: handleCallback accepts `Request | { request: Request }` but Next.js
+// route handlers require a plain Request, so narrowing the input type is safe.
 export const POST = handleCallback<z.infer<typeof queuePayloadSchema>>(
   async (message, metadata) => {
     const parseResult = queuePayloadSchema.safeParse(message);
@@ -58,4 +60,4 @@ export const POST = handleCallback<z.infer<typeof queuePayloadSchema>>(
       };
     },
   },
-);
+) as (req: Request) => Promise<Response>;
