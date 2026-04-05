@@ -74,6 +74,7 @@ const parsedEnv = createEnv({
 
     // IMAP provider support
     IMAP_ENABLED: booleanString.optional().default(false),
+    IMAP_SMTP_ENABLED: booleanString.optional().default(true), // false = disable all outbound SMTP for IMAP accounts
 
     // Generic OIDC provider (e.g., Kanidm, Keycloak, Authentik)
     OIDC_CLIENT_ID: z.string().optional(),

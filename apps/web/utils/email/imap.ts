@@ -27,6 +27,7 @@ import { labelIdToImapKeyword } from "@/utils/imap/flags";
 import { searchByUid, storeByUid, moveByUid } from "@/utils/imap/uid-helpers";
 import { createSmtpTransport } from "@/utils/imap/client";
 import { extractHeader } from "@/utils/imap/headers";
+import { env } from "@/env";
 
 export class ImapProvider implements EmailProvider {
   readonly name = "imap" as const;
@@ -1176,6 +1177,12 @@ export class ImapProvider implements EmailProvider {
   // SMTP: Send email
   // ---------------------------------------------------------------------------
 
+  private assertSmtpEnabled(): void {
+    if (!env.IMAP_SMTP_ENABLED) {
+      throw new Error("SMTP sending is disabled (IMAP_SMTP_ENABLED=false)");
+    }
+  }
+
   async sendEmail(args: {
     to: string;
     cc?: string;
@@ -1184,6 +1191,7 @@ export class ImapProvider implements EmailProvider {
     messageText: string;
     attachments?: MailAttachment[];
   }): Promise<void> {
+    this.assertSmtpEnabled();
     if (!this.emailAccountId) {
       throw new Error("emailAccountId is required for sendEmail");
     }
@@ -1218,6 +1226,7 @@ export class ImapProvider implements EmailProvider {
       contentType: string;
     }>;
   }): Promise<{ messageId: string; threadId: string }> {
+    this.assertSmtpEnabled();
     if (!this.emailAccountId) {
       throw new Error("emailAccountId is required for sendEmailWithHtml");
     }
@@ -1260,6 +1269,7 @@ export class ImapProvider implements EmailProvider {
       attachments?: MailAttachment[];
     },
   ): Promise<void> {
+    this.assertSmtpEnabled();
     if (!this.emailAccountId) {
       throw new Error("emailAccountId is required for replyToEmail");
     }
@@ -1297,6 +1307,7 @@ export class ImapProvider implements EmailProvider {
     email: ParsedMessage,
     args: { to: string; cc?: string; bcc?: string; content?: string },
   ): Promise<void> {
+    this.assertSmtpEnabled();
     if (!this.emailAccountId) {
       throw new Error("emailAccountId is required for forwardEmail");
     }

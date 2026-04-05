@@ -79,6 +79,7 @@ services:
       NEXT_PUBLIC_BYPASS_PREMIUM_CHECKS: "true"
       NEXT_PUBLIC_EMAIL_SEND_ENABLED: "true"
       IMAP_ENABLED: "true"
+      IMAP_SMTP_ENABLED: "${IMAP_SMTP_ENABLED:-false}"
       NEXT_PUBLIC_IMAP_ENABLED: "true"
       NEXT_PUBLIC_OIDC_ENABLED: "true"
     depends_on:
