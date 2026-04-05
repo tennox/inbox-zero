@@ -1,175 +1,380 @@
-# IMAP Support for Inbox Zero
+# IMAP Support for Inbox Zero — Implementation Plan
 
 **Issue:** https://github.com/elie222/inbox-zero/issues/62
 **Task dir:** `todo/2026-04-05_imap-support/`
+**User context:** Self-hosting for friends with Posteo & Migadu accounts. OIDC via Kanidm. Open source only.
 
 ## Context
 
-Users want to use Inbox Zero with their own mail servers (not just Gmail/Outlook). The issue has 30+ upvotes. The codebase already has a well-defined `EmailProvider` interface with Gmail and Outlook implementations. Adding IMAP support means: (1) implementing that interface for IMAP, (2) adding a non-OAuth auth flow for IMAP credentials, and (3) handling 108 `isGoogleProvider`/`isMicrosoftProvider` checks across 43 files.
+Adding IMAP provider support so self-hosters can use Inbox Zero with any IMAP mail server. Both target providers (Posteo, Migadu) have excellent IMAP support: THREAD=REFERENCES, IDLE, CONDSTORE/QRESYNC, MOVE, SORT, NOTIFY.
+
+**MVP scope:** AI auto-triage rules (categorize, archive, move-to-folder), bulk operations (archive/unsubscribe), cold email detection, email stats. No drafting, no reply tracker, no AI chat for v1.
+
+**Label strategy:** Database-first (labels stored in app DB, the `Label` model). Best-effort sync to IMAP keywords as optimization. Folder-move as optional user action.
 
 ---
 
-## Architecture Overview
+## Phase 0: Make Google/Outlook Optional for Self-Hosting
 
-### Current Provider Abstraction
-- **Interface:** `apps/web/utils/email/types.ts` — `EmailProvider` with ~60 methods
-- **Factory:** `apps/web/utils/email/provider.ts` — `createEmailProvider()` dispatches on `provider` string
-- **Implementations:** `apps/web/utils/email/google.ts` (GmailProvider), `apps/web/utils/email/microsoft.ts` (OutlookProvider)
-- **Type guards:** `apps/web/utils/email/provider-types.ts` — `isGoogleProvider()`, `isMicrosoftProvider()`
-- **Provider name type:** `readonly name: "google" | "microsoft"` (line 223 of types.ts)
+### `apps/web/env.ts`
+- Line 65: `GOOGLE_CLIENT_ID` → `z.string().optional()`
+- Line 66: `GOOGLE_CLIENT_SECRET` → `z.string().optional()`
+- Line 148: `GOOGLE_PUBSUB_TOPIC_NAME` → `z.string().optional()`
+- Add new env vars:
+  - `IMAP_ENABLED`: `booleanString.optional().default(false)`
+  - `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ISSUER_URL`, `OIDC_PROVIDER_ID`: optional strings
+- Note: `INTERNAL_API_KEY`, `EMAIL_ENCRYPT_SECRET`, `EMAIL_ENCRYPT_SALT` stay required (needed for IMAP too)
 
-### Auth Architecture
-- **Framework:** Better Auth (in `apps/web/utils/auth.ts`)
-- **OAuth only** — no email/password auth, no IMAP credential storage
-- **Token storage:** AES-256-GCM encrypted in `Account` model
-- **Account model:** `Account.provider` is `"google"` or `"microsoft"`
+### `apps/web/utils/auth.ts`
+- Wrap `googleSocialProvider` in `GOOGLE_CLIENT_ID` check (line 55-68, mostly done already)
+- Add OIDC to `genericOauthConfig` array (line 81-117) when `OIDC_*` env vars present:
+  ```typescript
+  ...(env.OIDC_ISSUER_URL ? [{
+    providerId: env.OIDC_PROVIDER_ID || "oidc",
+    discoveryUrl: `${env.OIDC_ISSUER_URL}/.well-known/openid-configuration`,
+    clientId: env.OIDC_CLIENT_ID,
+    clientSecret: env.OIDC_CLIENT_SECRET,
+    scopes: ["openid", "profile", "email"],
+    pkce: true,
+  }] : []),
+  ```
+- Line 208: Add OIDC provider ID to `trustedProviders`
+- **`handleLinkAccount()` (line 480):** Add early return for IMAP + unknown providers:
+  ```typescript
+  // IMAP accounts are linked via credential form, not OAuth
+  if (!isGoogleProvider(account.providerId) && !isMicrosoftProvider(account.providerId)) {
+    // For OIDC login accounts, EmailAccount is created separately during IMAP linking
+    await prisma.account.update({ where: { id: account.id }, data: { disconnectedAt: null } });
+    return;
+  }
+  ```
+- **`getProfileData()` (line 422):** Already returns undefined for unknown providers → `handleLinkAccount` guard above prevents this from being called
+
+### `apps/web/app/(landing)/login/LoginForm.tsx`
+- Add OIDC sign-in button when configured (pass `useOidcProvider` prop from server component)
+- Use existing `signInWithOauth2({ providerId: "oidc" })` — already supported
+
+### `apps/web/app/(landing)/login/page.tsx`
+- Pass new `useOidcProvider` prop based on env var presence
 
 ---
 
-## Implementation Plan
+## Phase 1: Type System & Schema
 
-### Phase 1: Extend the Type System
+### `apps/web/utils/email/types.ts`
+- Line 223: `readonly name: "google" | "microsoft"` → `"google" | "microsoft" | "imap"`
+- Line 115: `getFolders(): Promise<OutlookFolder[]>` → `Promise<EmailFolder[]>` (rename type)
+- Add `EmailFolder` type (same shape as OutlookFolder but generic name):
+  ```typescript
+  export interface EmailFolder {
+    id: string;
+    displayName: string;
+    childFolders: EmailFolder[];
+    childFolderCount?: number;
+  }
+  ```
+- Update `OutlookFolder` imports throughout to use `EmailFolder` (or keep OutlookFolder as alias)
 
-**Files to modify:**
-- `apps/web/utils/email/types.ts` — add `"imap"` to `name` union type
-- `apps/web/utils/email/provider-types.ts` — add `isImapProvider()` guard
-- `apps/web/utils/email/rate-limit-mode-error.ts` — add IMAP to rate limit metadata
-- `apps/web/prisma/schema.prisma` — `Account.provider` must accept `"imap"`
+### `apps/web/utils/email/provider-types.ts`
+- Add `isImapProvider()` type guard
+- Add `isApiBasedProvider()` (google|microsoft) for feature gating
 
-### Phase 2: IMAP Credential Auth Flow
+### `apps/web/utils/email/rate-limit-mode-error.ts`
+- Add `"imap"` to `EmailProviderRateLimitProvider` type
+- Add entry in `EMAIL_PROVIDER_RATE_LIMIT_METADATA` (pro-forma — IMAP servers rarely rate-limit)
+- Update `toRateLimitProvider()` to accept `"imap"`
 
-IMAP can't use OAuth (in general). Need a new auth path:
+### `apps/web/prisma/schema.prisma`
 
-1. **New Prisma fields** on `Account` model for IMAP credentials:
-   - `imapHost`, `imapPort`, `smtpHost`, `smtpPort`
-   - `imapUsername`, `imapPassword` (encrypted, reusing existing `encryptToken()`/`decryptToken()`)
-   - Or: a separate `ImapCredential` model linked to `Account`
+**New model — ImapCredential:**
+```prisma
+model ImapCredential {
+  id        String  @id @default(cuid())
+  accountId String  @unique
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
-2. **New onboarding/linking UI** — form to enter IMAP/SMTP server details + credentials
-   - `apps/web/app/api/imap/linking/` — new API routes for credential validation & saving
-   - `apps/web/app/(app)/accounts/AddAccount.tsx` — add "IMAP" option alongside Google/Microsoft
+  imapHost  String
+  imapPort  Int     @default(993)
+  smtpHost  String
+  smtpPort  Int     @default(587)
+  username  String
+  password  String  @db.Text  // encrypted via encryptToken()
 
-3. **Connection validation** — test IMAP connection before saving credentials
+  sieveHost String?
+  sievePort Int?    @default(4190)
 
-4. **Client factory** — `apps/web/utils/email-account-client.ts` needs `getImapClientForEmail()`
-
-### Phase 3: ImapProvider Implementation
-
-**New files:**
-- `apps/web/utils/email/imap.ts` — `ImapProvider implements EmailProvider`
-- `apps/web/utils/imap/` — directory for IMAP-specific utilities
-
-**Recommended library:** [`imapflow`](https://github.com/postalsys/imapflow) (modern, Promise-based IMAP client) + `nodemailer` (already a dependency) for SMTP/sending.
-
-**Method implementation difficulty by category:**
-
-| Category | Difficulty | Notes |
-|----------|-----------|-------|
-| getMessage/getMessages | Medium | IMAP FETCH, parse MIME with `mailparser` |
-| Thread reconstruction | **Hard** | No native threads — must group by `In-Reply-To`/`References` headers, build thread chains client-side |
-| Search | Medium | IMAP SEARCH command; limited vs Gmail's `q` syntax |
-| Archive/Move/Delete | Easy | IMAP MOVE/COPY + flag operations |
-| Labels | **Hard** | IMAP has flags (system + custom keywords), not labels. Must map to flags or use folders |
-| Drafts | Medium | Store in Drafts folder, MIME construction |
-| Send email | Easy | SMTP via nodemailer (already a dep) |
-| Filters | **Not possible server-side** | IMAP has no filter API. Options: (a) Sieve if server supports it, (b) client-side only via app rules, (c) return empty/stub |
-| Watch/Push notifications | **Hard** | IMAP IDLE for real-time, but only watches one folder at a time. Alternative: polling. No equivalent to Gmail historyId |
-| Bulk operations | Medium | Loop over messages, no batch API |
-| Signatures | **Not available** | IMAP doesn't expose signatures. Return empty |
-| Folders | Easy | IMAP LIST command, native folder support |
-| Attachments | Medium | Parse MIME parts with BODYSTRUCTURE |
-
-### Phase 4: Sync & Notifications
-
-This is the hardest part. Options:
-
-**Option A: Polling (simplest, recommended for v1)**
-- Periodic cron job polls IMAP server for new messages
-- Track last-seen UID per folder (`lastSyncedUid` in DB)
-- Use IMAP `UIDNEXT` to detect new messages
-- Pro: Simple, reliable. Con: Not real-time (1-5 min delay)
-
-**Option B: IMAP IDLE (real-time but complex)**
-- Persistent IMAP connection per account
-- IDLE only monitors one folder (INBOX)
-- Need connection pooling, reconnection logic, keepalive
-- Pro: Real-time. Con: Requires persistent server process, one connection per user
-
-**Recommendation:** Start with Option A (polling), add IDLE later.
-
-### Phase 5: Update Provider-Specific Branches
-
-108 occurrences of `isGoogleProvider`/`isMicrosoftProvider` across 43 files need review. Categories:
-
-1. **UI differences** (feature gating, terminology) — ~20 files
-   - Many features can be enabled for IMAP or shown with generic labels
-   - Some Google/Outlook-specific features should hide for IMAP (e.g., Google Calendar integration)
-
-2. **Provider-boundary code** (auth, linking, watch) — ~10 files
-   - Already handled by new IMAP auth flow and sync mechanism
-
-3. **Feature availability** (filters, signatures, folders vs labels) — ~13 files
-   - Need `supportsFilters()`, `supportsSignatures()` capability checks on the provider interface
-   - Better than hardcoding provider names everywhere
-
-**Recommended approach:** Add a `capabilities` object to `EmailProvider`:
-```typescript
-readonly capabilities: {
-  serverSideFilters: boolean;
-  signatures: boolean;
-  labels: boolean;       // Gmail-style labels
-  folders: boolean;      // Folder-based organization
-  pushNotifications: boolean;
-  threadApi: boolean;    // Native thread support
-  batchApi: boolean;
-};
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
 ```
-Then gradually replace `isGoogleProvider`/`isMicrosoftProvider` checks with capability checks where appropriate.
+
+**New model — ImapSyncState** (instead of overloading lastSyncedHistoryId):
+```prisma
+model ImapSyncState {
+  id             String @id @default(cuid())
+  emailAccountId String
+  emailAccount   EmailAccount @relation(fields: [emailAccountId], references: [id], onDelete: Cascade)
+
+  folder         String @default("INBOX")
+  lastUid        Int?
+  lastModseq     String?   // BigInt as string (MODSEQ can exceed JS Number range)
+  uidValidity    Int?      // Track UIDVALIDITY — if it changes, full resync needed
+
+  updatedAt      DateTime @updatedAt
+
+  @@unique([emailAccountId, folder])
+}
+```
+
+**Add relations:**
+- `Account`: add `imapCredential ImapCredential?`
+- `EmailAccount`: add `imapSyncStates ImapSyncState[]`
+
+**Encryption:** Extend `apps/web/prisma/prisma-extensions.ts` to encrypt/decrypt `ImapCredential.password` (same pattern as Account.access_token/refresh_token)
 
 ---
 
-## Scope Assessment
+## Phase 2: IMAP Client Infrastructure
 
-### Minimum Viable IMAP Support (Large effort)
-- ~2000-4000 lines of new code for ImapProvider
-- ~500-1000 lines for auth/credential flow
-- ~200-500 lines for schema changes
-- Review/update 43 files with provider checks
-- Estimated: **significant multi-week effort** for a single developer
+### Install dependencies
+```bash
+cd apps/web && pnpm add imapflow mailparser && pnpm add -D @types/mailparser
+```
 
-### What Can Be Stubbed/Deferred
-- Server-side filters → use app-level rules only
-- Signatures → return empty
-- Push notifications → polling only for v1
-- Calendar integration → skip for IMAP
-- Batch operations → sequential fallback
+### `apps/web/utils/imap/client.ts` — Connection factory
+```typescript
+import { ImapFlow } from "imapflow";
+import { createTransport } from "nodemailer";
 
-### Key Risks
-1. **Thread reconstruction** — most complex part, affects core UX
-2. **Connection management** — IMAP connections are stateful (unlike REST APIs)
-3. **Server compatibility** — different IMAP servers vary in capability (CONDSTORE, IDLE, MOVE extensions)
-4. **Testing** — need real IMAP server for integration tests (Greenmail, Dovecot in Docker)
+export async function createImapClient(emailAccountId: string): Promise<ImapFlow>
+export async function createSmtpTransport(emailAccountId: string): Promise<Transporter>
+```
+- Fetch ImapCredential from DB, decrypt password
+- Create ImapFlow with `{ host, port, secure: true, auth: { user, pass } }`
+- **Critical:** All operations use `{uid: true}` mode — create wrapper helpers
+- Return client with detected capabilities (check `client.capabilities` after connect)
+
+### `apps/web/utils/imap/uid-helpers.ts` — UID-safe wrappers
+```typescript
+// All fetch/search/store operations must use UIDs, not sequence numbers
+// ImapFlow defaults to sequence numbers unless {uid: true} is passed
+export async function fetchByUid(client: ImapFlow, range: string, fields: object)
+export async function searchByUid(client: ImapFlow, criteria: object): Promise<number[]>
+export async function storeByUid(client: ImapFlow, range: string, flags: object)
+```
+
+### `apps/web/utils/email-account-client.ts`
+- Add `getImapClientForEmail({ emailAccountId, logger })` function
+
+### `apps/web/utils/email/provider.ts`
+- Add `"imap"` case in `createEmailProvider()`:
+  ```typescript
+  if (rateLimitProvider === "imap") {
+    const { createImapClient } = await import("@/utils/imap/client");
+    const client = await createImapClient(emailAccountId);
+    return new ImapProvider(client, logger, emailAccountId);
+  }
+  ```
+
+---
+
+## Phase 3: ImapProvider Core
+
+### `apps/web/utils/email/imap.ts` — `ImapProvider implements EmailProvider`
+
+### Thread ID Strategy (addressing review concern)
+- Use the **root Message-ID from the `References` header chain** as the thread ID
+- When IMAP THREAD command returns a thread group, fetch the `References` header of first message, extract the oldest Message-ID as thread root
+- If no References header, use the message's own Message-ID
+- Store thread membership in the existing `EmailMessage` table (`threadId` column already exists)
+- **UIDVALIDITY handling:** On each connection, compare current UIDVALIDITY with stored value in ImapSyncState. If changed, trigger full resync of that folder.
+
+### `ParsedMessage` field mapping for IMAP
+- `id`: String(UID) — use UID as message identifier
+- `threadId`: Root Message-ID from References chain
+- `historyId`: String(MODSEQ) if CONDSTORE available, else "0"
+- `labelIds`: Map from IMAP flags/keywords → app label IDs
+- `internalDate`: IMAP INTERNALDATE (maps directly)
+- `snippet`: Use SNIPPET=FUZZY (both servers support PREVIEW)
+- `headers`: Parsed from IMAP ENVELOPE + HEADER fetch
+- `parentFolderId`: Current mailbox name
+
+### Utility files under `apps/web/utils/imap/`:
+- `thread.ts` — IMAP THREAD command, thread ID resolution from References
+- `message.ts` — FETCH + mailparser, construct ParsedMessage
+- `folder.ts` — SPECIAL-USE detection (Archive, Trash, Junk, Sent, Drafts), folder CRUD
+- `search.ts` — Query → IMAP SEARCH criteria translation
+- `flags.ts` — Flag/keyword management, mapping to app labels
+
+### Methods: Implement vs Stub
+
+**Implement (MVP):**
+getMessage, getMessagesBatch, getThread, getThreadMessages, getThreads, getThreadsWithQuery, getMessagesWithPagination, getMessagesFromSender, getInboxMessages, getSentMessages, getInboxStats, archiveThread, archiveThreadWithLabel, archiveMessage, trashThread, markRead, markReadThread, markSpam, moveThreadToFolder, labelMessage, createLabel, getLabels, getLabelById, getLabelByName, getOrCreateInboxZeroLabel, removeThreadLabel, removeThreadLabels, bulkArchiveFromSenders, bulkTrashFromSenders, searchMessages, hasPreviousCommunicationsWithSenderOrDomain, countReceivedMessages, getFolders, getOrCreateFolderIdByName, blockUnsubscribedEmail, isReplyInThread, isSentMessage, toJSON, name
+
+**Stub (not in MVP):**
+- `watchEmails()` → return null
+- `unwatchEmails()` → no-op
+- `processHistory()` → no-op (polling replaces)
+- `createAutoArchiveFilter/createFilter/getFiltersList/deleteFilter` → no-op / empty
+- `getSignatures()` → return []
+- `sendEmail/sendEmailWithHtml/replyToEmail/forwardEmail` → implement basic SMTP (useful even for MVP — forward rule)
+- `draftEmail/createDraft/getDraft/getDrafts/updateDraft/deleteDraft/sendDraft` → throw not supported
+- `getAttachment()` → implement (needed for filing detection)
+- `checkIfReplySent()` → SEARCH Sent folder
+- `getAccessToken()` → return ""
+
+---
+
+## Phase 4: IMAP Account Linking UI & API
+
+### `apps/web/app/api/imap/linking/validate/route.ts` — POST
+- Accept: `{ imapHost, imapPort, smtpHost, smtpPort, username, password, email }`
+- Validate with Zod schema
+- Test IMAP: connect → login → list INBOX → disconnect
+- Test SMTP: verify → disconnect
+- Return `{ success: true }` or error details
+
+### `apps/web/app/api/imap/linking/connect/route.ts` — POST
+- Requires authenticated session
+- Encrypt password using `encryptToken()`
+- Create Account record: `provider: "imap"`, `providerAccountId: email`
+- Create ImapCredential record linked to Account
+- Create EmailAccount record
+- Return emailAccountId
+
+### `apps/web/app/(app)/accounts/AddAccount.tsx`
+- Add "IMAP" tab alongside Google/Microsoft
+- Form fields: email, IMAP host, IMAP port, SMTP host, SMTP port, username, password
+- "Test Connection" → validate endpoint
+- "Connect" → connect endpoint
+- Conditionally show based on `IMAP_ENABLED` env var (exposed via NEXT_PUBLIC or server component)
+
+---
+
+## Phase 5: Polling Sync
+
+### `apps/web/utils/imap/sync.ts`
+```typescript
+export async function pollImapAccount(emailAccountId: string, logger: Logger): Promise<void>
+```
+
+Strategy:
+1. Connect to IMAP, SELECT INBOX
+2. Check UIDVALIDITY against stored ImapSyncState
+   - If changed: clear sync state, trigger full resync
+3. If CONDSTORE available:
+   - FETCH changes since last MODSEQ (CHANGEDSINCE modifier)
+   - Track MODSEQ per-folder in ImapSyncState
+4. Else:
+   - SEARCH UID `lastUid+1:*` for new messages
+5. For each new/changed message:
+   - Fetch full message
+   - Parse to `ParsedMessage`
+   - Feed into `processHistoryItem` pipeline (existing, provider-agnostic)
+6. Update ImapSyncState (lastUid, lastModseq, uidValidity)
+7. Disconnect
+
+### `apps/web/app/api/imap/poll/route.ts` — Cron endpoint
+- Iterate all IMAP email accounts (where account.provider = "imap" AND account.disconnectedAt IS NULL)
+- Poll each one sequentially (or with bounded concurrency)
+- Protected by CRON_SECRET or INTERNAL_API_KEY
+
+### Watch Manager integration
+- `apps/web/utils/email/watch-manager.ts` — `getEmailAccountsToWatch()` (line 37):
+  Add filter: `account: { provider: { not: "imap" } }` to Prisma where clause
+
+---
+
+## Phase 6: Must-Fix Provider Checks
+
+These files will crash or behave incorrectly for IMAP users:
+
+| File | Issue | Fix |
+|------|-------|-----|
+| `utils/actions/permissions.ts:76-77` | Throws "Unsupported provider" | Add IMAP case: return `{ hasAllPermissions: true, hasRefreshToken: true }` |
+| `utils/actions/clean.ts:40` | Google-only gate | Allow IMAP (IMAP SEARCH by date works fine) |
+| `utils/email/watch-manager.ts` | Polls all accounts for watch setup | Filter out IMAP at query level |
+| `providers/EmailProvider.tsx` | Uses isGoogleProvider for label colors | Add IMAP fallback (default colors) |
+| `app/api/user/folders/route.ts` | Rejects non-Microsoft | Allow IMAP (getFolders works natively) |
+| `utils/terminology.ts` | Provider-specific terms | Add IMAP defaults |
+| `utils/account-linking.ts` | OAuth-specific linking flow | Add IMAP path |
+| `components/SideNav.tsx` | Feature gating by provider | Add IMAP awareness |
+| `app/(app)/[emailAccountId]/permissions/consent/page.tsx` | OAuth permissions page | Skip/redirect for IMAP |
+
+---
+
+## Implementation Order & Subagent Decomposition
+
+### Workstream A: Foundation (sequential, blocks everything)
+1. Phase 0: env.ts changes (make Google optional)
+2. Phase 0: auth.ts changes (OIDC config, handleLinkAccount guard)
+3. Phase 1: Type system (types.ts, provider-types.ts, rate-limit)
+4. Phase 1: Schema (ImapCredential, ImapSyncState models)
+5. Prisma migration: generate + apply
+
+### Workstream B: IMAP Core (after A complete)
+6. Phase 2: Install deps, IMAP client factory, UID helpers
+7. Phase 3: ImapProvider — message/thread/folder methods
+8. Phase 3: ImapProvider — search/label/bulk methods
+9. Phase 3: ImapProvider — stub methods + SMTP send
+
+### Workstream C: UI & Linking (after A complete, parallel with B)
+10. Phase 4: IMAP linking API routes (validate + connect)
+11. Phase 4: AddAccount.tsx IMAP form
+12. Phase 0: LoginForm OIDC button
+
+### Workstream D: Sync (after B complete)
+13. Phase 5: Polling sync logic
+14. Phase 5: Poll cron endpoint
+
+### Workstream E: Provider Check Fixes (after B, parallel with D)
+15. Phase 6: Must-fix provider checks (permissions, clean, watch-manager, etc.)
 
 ---
 
 ## Verification Plan
-1. Unit tests for ImapProvider methods using mock IMAP server
-2. Integration tests with Dovecot/Greenmail Docker container
-3. Manual test: connect a real IMAP account, verify message listing, send, archive, thread view
-4. Verify all 43 files with provider checks handle IMAP gracefully (no crashes, reasonable UX)
+
+1. App starts with IMAP-only env (no GOOGLE_CLIENT_ID)
+2. OIDC login works via Kanidm
+3. IMAP account links via credential form (connection validated)
+4. Thread listing from INBOX (using IMAP THREAD=REFERENCES)
+5. Message read (full MIME parse, headers, body, snippets)
+6. Archive thread (MOVE to Archive folder)
+7. Label message (IMAP keyword + DB label)
+8. Search by sender
+9. AI rule processes new email (via polling)
+10. Bulk archive from sender
+11. All major UI pages load without crash for IMAP accounts
+12. No regressions for Google/Outlook providers
 
 ---
 
-## Key Files Reference
-| File | Purpose |
-|------|---------|
-| `apps/web/utils/email/types.ts` | EmailProvider interface (60 methods) |
-| `apps/web/utils/email/provider.ts` | Provider factory |
-| `apps/web/utils/email/google.ts` | Gmail implementation (~85 methods) |
-| `apps/web/utils/email/microsoft.ts` | Outlook implementation (~81 methods) |
-| `apps/web/utils/email/provider-types.ts` | Provider type guards |
-| `apps/web/utils/email-account-client.ts` | OAuth client initialization |
-| `apps/web/utils/auth.ts` | Auth config, account linking |
-| `apps/web/prisma/schema.prisma` | Database schema |
-| `apps/web/utils/email/watch-manager.ts` | Push notification lifecycle |
-| `apps/web/app/(app)/accounts/AddAccount.tsx` | Add account UI |
+## Key Files
+
+| File | Phase |
+|------|-------|
+| `apps/web/env.ts` | 0 |
+| `apps/web/utils/auth.ts` | 0 |
+| `apps/web/app/(landing)/login/LoginForm.tsx` | 0 |
+| `apps/web/utils/email/types.ts` | 1 |
+| `apps/web/utils/email/provider-types.ts` | 1 |
+| `apps/web/utils/email/rate-limit-mode-error.ts` | 1 |
+| `apps/web/prisma/schema.prisma` | 1 |
+| `apps/web/utils/imap/client.ts` | 2 (NEW) |
+| `apps/web/utils/imap/uid-helpers.ts` | 2 (NEW) |
+| `apps/web/utils/email-account-client.ts` | 2 |
+| `apps/web/utils/email/provider.ts` | 2 |
+| `apps/web/utils/email/imap.ts` | 3 (NEW) |
+| `apps/web/utils/imap/thread.ts` | 3 (NEW) |
+| `apps/web/utils/imap/message.ts` | 3 (NEW) |
+| `apps/web/utils/imap/folder.ts` | 3 (NEW) |
+| `apps/web/utils/imap/search.ts` | 3 (NEW) |
+| `apps/web/utils/imap/flags.ts` | 3 (NEW) |
+| `apps/web/app/api/imap/linking/validate/route.ts` | 4 (NEW) |
+| `apps/web/app/api/imap/linking/connect/route.ts` | 4 (NEW) |
+| `apps/web/app/(app)/accounts/AddAccount.tsx` | 4 |
+| `apps/web/utils/imap/sync.ts` | 5 (NEW) |
+| `apps/web/app/api/imap/poll/route.ts` | 5 (NEW) |
+| `apps/web/utils/actions/permissions.ts` | 6 |
+| `apps/web/utils/actions/clean.ts` | 6 |
+| `apps/web/utils/email/watch-manager.ts` | 6 |

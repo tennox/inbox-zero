@@ -62,8 +62,8 @@ const parsedEnv = createEnv({
           .map((entry) => entry.trim())
           .filter(Boolean),
       ),
-    GOOGLE_CLIENT_ID: z.string().min(1),
-    GOOGLE_CLIENT_SECRET: z.string().min(1),
+    GOOGLE_CLIENT_ID: z.string().optional(),
+    GOOGLE_CLIENT_SECRET: z.string().optional(),
     // Local Google emulation only; used for both OAuth and resource APIs.
     GOOGLE_BASE_URL: z.string().url().optional(),
     // Local Microsoft emulation only; used for both OAuth and Microsoft Graph APIs.
@@ -71,6 +71,16 @@ const parsedEnv = createEnv({
     MICROSOFT_CLIENT_ID: z.string().optional(),
     MICROSOFT_CLIENT_SECRET: z.string().optional(),
     MICROSOFT_TENANT_ID: z.string().optional().default("common"),
+
+    // IMAP provider support
+    IMAP_ENABLED: booleanString.optional().default(false),
+
+    // Generic OIDC provider (e.g., Kanidm, Keycloak, Authentik)
+    OIDC_CLIENT_ID: z.string().optional(),
+    OIDC_CLIENT_SECRET: z.string().optional(),
+    OIDC_ISSUER_URL: z.string().url().optional(),
+    OIDC_PROVIDER_ID: z.string().optional().default("oidc"),
+    OIDC_PROVIDER_NAME: z.string().optional().default("OIDC"),
     EMAIL_ENCRYPT_SECRET: z.string(),
     EMAIL_ENCRYPT_SALT: z.string(),
 
@@ -145,7 +155,7 @@ const parsedEnv = createEnv({
     QSTASH_NEXT_SIGNING_KEY: z.string().optional(),
     QUEUE_BACKEND: z.enum(["bullmq", "internal", "qstash"]).optional(),
 
-    GOOGLE_PUBSUB_TOPIC_NAME: z.string().min(1),
+    GOOGLE_PUBSUB_TOPIC_NAME: z.string().optional(),
     GOOGLE_PUBSUB_VERIFICATION_TOKEN: z.string().optional(),
 
     MICROSOFT_WEBHOOK_CLIENT_STATE: z.string().optional(),
@@ -321,6 +331,9 @@ const parsedEnv = createEnv({
       .string()
       .optional()
       .default("iencpoofingkkakccoknbleilcliokfk"),
+    NEXT_PUBLIC_IMAP_ENABLED: booleanString.optional().default(false),
+    NEXT_PUBLIC_OIDC_ENABLED: booleanString.optional().default(false),
+    NEXT_PUBLIC_OIDC_PROVIDER_NAME: z.string().optional().default("OIDC"),
   },
   // For Next.js >= 13.4.4, you only need to destructure client variables:
   experimental__runtimeEnv: {
@@ -408,6 +421,9 @@ const parsedEnv = createEnv({
     NEXT_PUBLIC_IS_RESEND_CONFIGURED:
       process.env.NEXT_PUBLIC_IS_RESEND_CONFIGURED,
     NEXT_PUBLIC_TABS_EXTENSION_ID: process.env.NEXT_PUBLIC_TABS_EXTENSION_ID,
+    NEXT_PUBLIC_IMAP_ENABLED: process.env.NEXT_PUBLIC_IMAP_ENABLED,
+    NEXT_PUBLIC_OIDC_ENABLED: process.env.NEXT_PUBLIC_OIDC_ENABLED,
+    NEXT_PUBLIC_OIDC_PROVIDER_NAME: process.env.NEXT_PUBLIC_OIDC_PROVIDER_NAME,
   },
 });
 
