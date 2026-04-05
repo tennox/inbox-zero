@@ -9,6 +9,11 @@ type QueueMetadata = {
   deliveryCount: number;
 };
 
+// @vercel/queue's handleCallback accepts `CallbackRequestInput = Request | { request: Request }`
+// but Next.js route handlers require `(req: Request | NextRequest) => Response`.
+// This type bridges the two.
+type NextRouteHandler = (req: Request) => Promise<Response>;
+
 export function createForwardingQueueHandler<TSchema extends z.ZodTypeAny>({
   loggerScope,
   schema,
@@ -31,9 +36,11 @@ export function createForwardingQueueHandler<TSchema extends z.ZodTypeAny>({
     payload: z.infer<TSchema>,
     metadata: QueueMetadata,
   ) => Record<string, unknown>;
-}) {
+}): NextRouteHandler {
   const logger = createScopedLogger(loggerScope);
 
+  // Cast: handleCallback accepts `Request | { request: Request }` but Next.js
+  // always passes a plain Request, so narrowing the input type is safe.
   return handleCallback<z.infer<TSchema>>(
     async (message, metadata) => {
       const parseResult = schema.safeParse(message);
@@ -72,5 +79,5 @@ export function createForwardingQueueHandler<TSchema extends z.ZodTypeAny>({
         };
       },
     },
-  );
+  ) as NextRouteHandler;
 }

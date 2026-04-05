@@ -141,7 +141,9 @@ async function testImap() {
         `  HTML length: ${parsed.html?.toString().length || 0} chars`,
       );
       console.log(`  Attachments: ${parsed.attachments?.length || 0}`);
-      console.log(`  References: ${parsed.references?.join(", ") || "(none)"}`);
+      const refs = parsed.references;
+      const refsStr = Array.isArray(refs) ? refs.join(", ") : (refs || "(none)");
+      console.log(`  References: ${refsStr}`);
       console.log(`  Message-ID: ${parsed.messageId || "(none)"}`);
     }
 
