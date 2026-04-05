@@ -46,6 +46,18 @@ if [ -n "$NEXT_PUBLIC_CLEANER_ENABLED" ]; then
     /app/docker/scripts/replace-placeholder.sh "NEXT_PUBLIC_CLEANER_ENABLED_PLACEHOLDER" "$NEXT_PUBLIC_CLEANER_ENABLED"
 fi
 
+if [ -n "$NEXT_PUBLIC_IMAP_ENABLED" ]; then
+    /app/docker/scripts/replace-placeholder.sh "NEXT_PUBLIC_IMAP_ENABLED_PLACEHOLDER" "$NEXT_PUBLIC_IMAP_ENABLED"
+fi
+
+if [ -n "$NEXT_PUBLIC_OIDC_ENABLED" ]; then
+    /app/docker/scripts/replace-placeholder.sh "NEXT_PUBLIC_OIDC_ENABLED_PLACEHOLDER" "$NEXT_PUBLIC_OIDC_ENABLED"
+fi
+
+if [ -n "$NEXT_PUBLIC_OIDC_PROVIDER_NAME" ]; then
+    /app/docker/scripts/replace-placeholder.sh "NEXT_PUBLIC_OIDC_PROVIDER_NAME_PLACEHOLDER" "$NEXT_PUBLIC_OIDC_PROVIDER_NAME"
+fi
+
 # Always replace — the placeholder is a non-empty string that would be coerced
 # to true by booleanString, incorrectly disabling drafting by default
 /app/docker/scripts/replace-placeholder.sh "NEXT_PUBLIC_AUTO_DRAFT_DISABLED_PLACEHOLDER" "${NEXT_PUBLIC_AUTO_DRAFT_DISABLED:-false}"

@@ -152,6 +152,13 @@ services:
             sleep 21600
           done
         ) &
+        (
+          while true; do
+            echo \"[cron] Polling IMAP accounts...\"
+            curl -s -X GET 'http://web:3000/api/imap/poll' -H \"Authorization: Bearer $${CRON_SECRET}\" || echo \"[cron] Warning: imap/poll request failed\"
+            sleep 120
+          done
+        ) &
         wait
       "
     env_file:

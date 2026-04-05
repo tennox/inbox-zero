@@ -1,0 +1,134 @@
+# docker-compose.imap.yml — Self-hosted Inbox Zero with IMAP support
+#
+# Usage:
+#   1. Copy apps/web/.env.example to apps/web/.env and configure it
+#   2. docker compose -f docker-compose.imap.yml up --build
+#
+# First run takes ~5min to build. Subsequent runs use cache.
+#
+# Required .env settings:
+#   AUTH_SECRET, EMAIL_ENCRYPT_SECRET, EMAIL_ENCRYPT_SALT, INTERNAL_API_KEY
+#   CRON_SECRET, DEFAULT_LLM_PROVIDER, LLM_API_KEY
+#   OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_ISSUER_URL
+#   IMAP_ENABLED=true, NEXT_PUBLIC_IMAP_ENABLED=true
+#   NEXT_PUBLIC_OIDC_ENABLED=true
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: inboxzero
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - iz
+
+  redis:
+    image: redis:7
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - iz
+
+  redis-http:
+    image: hiett/serverless-redis-http:latest
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: ${UPSTASH_REDIS_TOKEN:-dev_token}
+      SRH_CONNECTION_STRING: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - iz
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.local
+      args:
+        NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://localhost:3000}
+        NEXT_PUBLIC_BYPASS_PREMIUM_CHECKS: "true"
+        NEXT_PUBLIC_EMAIL_SEND_ENABLED: "true"
+        # Bake IMAP/OIDC feature flags into the client bundle
+        NEXT_PUBLIC_IMAP_ENABLED: "true"
+        NEXT_PUBLIC_OIDC_ENABLED: "true"
+        NEXT_PUBLIC_OIDC_PROVIDER_NAME: ${NEXT_PUBLIC_OIDC_PROVIDER_NAME:-SSO}
+    env_file:
+      - path: ./apps/web/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-password}@db:5432/inboxzero?schema=public
+      DIRECT_URL: postgresql://postgres:${POSTGRES_PASSWORD:-password}@db:5432/inboxzero?schema=public
+      UPSTASH_REDIS_URL: http://redis-http:80
+      UPSTASH_REDIS_TOKEN: ${UPSTASH_REDIS_TOKEN:-dev_token}
+      INTERNAL_API_URL: http://web:3000
+      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://localhost:3000}
+      NEXT_PUBLIC_BYPASS_PREMIUM_CHECKS: "true"
+      NEXT_PUBLIC_EMAIL_SEND_ENABLED: "true"
+      IMAP_ENABLED: "true"
+      NEXT_PUBLIC_IMAP_ENABLED: "true"
+      NEXT_PUBLIC_OIDC_ENABLED: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    restart: unless-stopped
+    networks:
+      - iz
+
+  cron:
+    image: alpine:latest
+    depends_on:
+      - web
+    environment:
+      CRON_SECRET: ${CRON_SECRET}
+    command: >
+      sh -c "
+        apk add --no-cache curl &&
+        echo '[cron] Starting IMAP poll + scheduled actions loops...' &&
+        (
+          while true; do
+            curl -sf 'http://web:3000/api/imap/poll' -H \"Authorization: Bearer $${CRON_SECRET}\" || echo '[cron] imap/poll failed'
+            sleep 120
+          done
+        ) &
+        (
+          while true; do
+            curl -sf 'http://web:3000/api/cron/scheduled-actions' -H \"Authorization: Bearer $${CRON_SECRET}\" || echo '[cron] scheduled-actions failed'
+            sleep 900
+          done
+        ) &
+        (
+          while true; do
+            curl -sf 'http://web:3000/api/cron/automation-jobs' -H \"Authorization: Bearer $${CRON_SECRET}\" || echo '[cron] automation-jobs failed'
+            sleep 900
+          done
+        ) &
+        wait
+      "
+    restart: unless-stopped
+    networks:
+      - iz
+
+volumes:
+  db-data:
+  redis-data:
+
+networks:
+  iz:
