@@ -29,6 +29,7 @@ model Account {
   session_state         String?
   user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   emailAccount          EmailAccount?
+  imapCredential        ImapCredential?
 
   @@unique([provider, providerAccountId])
   @@index([userId])
@@ -206,6 +207,7 @@ model EmailAccount {
   filingFolders         FilingFolder[]
   apiKeys               ApiKey[]
   classificationFeedback ClassificationFeedback[]
+  imapSyncStates         ImapSyncState[]
 
   @@index([userId])
   @@index([lastSummaryEmailAt])
@@ -1649,4 +1651,39 @@ enum AutomationJobRunStatus {
   SENT
   SKIPPED
   FAILED
+}
+
+model ImapCredential {
+  id        String  @id @default(cuid())
+  accountId String  @unique
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  imapHost  String
+  imapPort  Int     @default(993)
+  smtpHost  String
+  smtpPort  Int     @default(587)
+  username  String
+  password  String  @db.Text
+
+  sieveHost String?
+  sievePort Int?    @default(4190)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ImapSyncState {
+  id             String       @id @default(cuid())
+  emailAccountId String
+  emailAccount   EmailAccount @relation(fields: [emailAccountId], references: [id], onDelete: Cascade)
+
+  folder      String @default("INBOX")
+  lastUid     Int?
+  lastModseq  String?
+  uidValidity Int?
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([emailAccountId, folder])
+  @@index([emailAccountId])
 }

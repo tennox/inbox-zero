@@ -1,9 +1,15 @@
 import type { ParsedMessage } from "@/utils/types";
 import type { InboxZeroLabel } from "@/utils/label";
 import type { ThreadsQuery } from "@/app/api/threads/validation";
-import type { OutlookFolder } from "@/utils/outlook/folders";
 import type { Logger } from "@/utils/logger";
 import type { Attachment as MailAttachment } from "nodemailer/lib/mailer";
+
+export interface EmailFolder {
+  id: string;
+  displayName: string;
+  childFolders: EmailFolder[];
+  childFolderCount?: number;
+}
 
 export interface EmailThread {
   historyId?: string;
@@ -112,7 +118,7 @@ export interface EmailProvider {
   getDraft(draftId: string): Promise<ParsedMessage | null>;
   getDrafts(options?: { maxResults?: number }): Promise<ParsedMessage[]>;
   getFiltersList(): Promise<EmailFilter[]>;
-  getFolders(): Promise<OutlookFolder[]>;
+  getFolders(): Promise<EmailFolder[]>;
   getInboxMessages(maxResults?: number): Promise<ParsedMessage[]>;
   getInboxStats(): Promise<{ total: number; unread: number }>;
   getLabelById(labelId: string): Promise<EmailLabel | null>;
@@ -220,7 +226,7 @@ export interface EmailProvider {
     ownerEmail: string,
     folderName: string,
   ): Promise<void>;
-  readonly name: "google" | "microsoft";
+  readonly name: "google" | "microsoft" | "imap";
   processHistory(options: {
     emailAddress: string;
     historyId?: number;
