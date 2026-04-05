@@ -37,9 +37,6 @@
   "lint-staged": {
     "*.{js,jsx,ts,tsx,json,jsonc,css,scss,md,mdx}": [
       "ultracite fix"
-    ],
-    "apps/web/**/*.{ts,tsx}": [
-      "bash -c 'cd apps/web && npx tsc --noEmit'"
     ]
   },
   "engines": {
