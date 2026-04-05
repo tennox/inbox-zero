@@ -6,6 +6,7 @@ import { LoginForm } from "@/app/(landing)/login/LoginForm";
 import { getRequiresReconsentDescription } from "@/app/(landing)/login/messages";
 import { auth } from "@/utils/auth";
 import { isGoogleOauthEmulationEnabled } from "@/utils/google/oauth";
+import { env } from "@/env";
 import { AlertBasic } from "@/components/Alert";
 import { Button } from "@/components/ui/button";
 import { WELCOME_PATH } from "@/utils/config";
@@ -49,6 +50,9 @@ export default async function AuthenticationPage(props: {
           <Suspense>
             <LoginForm
               useGoogleOauthEmulator={isGoogleOauthEmulationEnabled()}
+              useOidcProvider={!!env.OIDC_ISSUER_URL}
+              oidcProviderName={env.OIDC_PROVIDER_NAME}
+              oidcProviderId={env.OIDC_PROVIDER_ID}
             />
           </Suspense>
         </div>

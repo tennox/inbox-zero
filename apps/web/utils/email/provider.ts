@@ -29,7 +29,10 @@ export async function createEmailProvider({
   });
 
   if (rateLimitProvider === "imap") {
-    throw new Error("IMAP provider not yet implemented");
+    const { createImapClient } = await import("@/utils/imap/client");
+    const { ImapProvider } = await import("@/utils/email/imap");
+    const client = await createImapClient(emailAccountId, logger);
+    return new ImapProvider(client, logger, emailAccountId);
   }
 
   if (rateLimitProvider === "google") {

@@ -26,8 +26,14 @@ const logger = createClientLogger("login/LoginForm");
 
 export function LoginForm({
   useGoogleOauthEmulator,
+  useOidcProvider,
+  oidcProviderName,
+  oidcProviderId,
 }: {
   useGoogleOauthEmulator: boolean;
+  useOidcProvider?: boolean;
+  oidcProviderName?: string;
+  oidcProviderId?: string;
 }) {
   const searchParams = useSearchParams();
   const next = searchParams?.get("next");
@@ -35,6 +41,7 @@ export function LoginForm({
 
   const [loadingGoogle, setLoadingGoogle] = useState(false);
   const [loadingMicrosoft, setLoadingMicrosoft] = useState(false);
+  const [loadingOidc, setLoadingOidc] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
 
   const handleGoogleSignIn = async () => {
@@ -79,6 +86,26 @@ export function LoginForm({
       errorCallbackURL,
       setLoading: setLoadingMicrosoft,
     });
+  };
+
+  const handleOidcSignIn = async () => {
+    setLoadingOidc(true);
+    try {
+      await signInWithOauth2({
+        providerId: oidcProviderId || "oidc",
+        callbackURL,
+        errorCallbackURL,
+      });
+    } catch (error) {
+      const description = getSocialSignInErrorMessage(error);
+      logger.error("Error signing in with OIDC", { error });
+      toastError({
+        title: `Error signing in with ${oidcProviderName || "OIDC"}`,
+        description,
+      });
+    } finally {
+      setLoadingOidc(false);
+    }
   };
 
   return (
@@ -144,6 +171,18 @@ export function LoginForm({
           <span className="ml-2">Sign in with Microsoft</span>
         </span>
       </Button>
+
+      {useOidcProvider && (
+        <Button
+          size="2xl"
+          loading={loadingOidc}
+          onClick={handleOidcSignIn}
+        >
+          <span className="flex items-center justify-center">
+            <span>Sign in with {oidcProviderName || "OIDC"}</span>
+          </span>
+        </Button>
+      )}
 
       <UIButton
         variant="ghost"

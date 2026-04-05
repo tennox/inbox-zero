@@ -11,6 +11,7 @@ import prisma from "@/utils/prisma";
 import { SafeError } from "@/utils/error";
 import {
   isGoogleProvider,
+  isImapProvider,
   isMicrosoftProvider,
 } from "@/utils/email/provider-types";
 import type { Logger } from "@/utils/logger";
@@ -71,6 +72,10 @@ export const adminCheckPermissionsAction = adminActionClient
 
       if (isMicrosoftProvider(emailAccount.account.provider)) {
         return checkOutlookPermissions({ emailAccountId, logger });
+      }
+
+      if (isImapProvider(emailAccount.account.provider)) {
+        return { hasAllPermissions: true, hasRefreshToken: true };
       }
 
       if (!isGoogleProvider(emailAccount.account.provider)) {
